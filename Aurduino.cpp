@@ -1,125 +1,106 @@
 #include <Servo.h>
-#include <LiquidCrystal.h>
-#include <Keypad.h>
 
-// LCD
-LiquidCrystal lcd(7, 6, 5, 4, 3, 2);
+// Pin Definitions
+#define LED_PIN 13        // Built-in LED or external LED
+#define SERVO_PIN 12      // Servo motor for gate
+#define BUZZER_PIN 11     // Buzzer for feedback
+#define RELAY_PIN 10      // Relay for electromagnetic lock
 
-// Servo
-Servo myServo;
+// Servo Object
+Servo gateServo;
 
-// Pins
-int ledPin = 10;
-int buzzerPin = 11;
-
-// Keypad
-const byte ROWS = 4;
-const byte COLS = 4;
-
-char keys[ROWS][COLS] = {
-  {'1','2','3','A'},
-  {'4','5','6','B'},
-  {'7','8','9','C'},
-  {'*','0','#','D'}
-};
-
-byte rowPins[ROWS] = {12, 13, A0, A1};
-byte colPins[COLS] = {A2, A3, A4, A5};
-
-Keypad keypad = Keypad(makeKeymap(keys), rowPins, colPins, ROWS, COLS);
-
-// Variables
-String enteredPassword = "";
-bool passwordEntered = false;
+// Timing variables
+unsigned long previousMillis = 0;
+const long unlockDuration = 5000;  // 5 seconds unlock time
+bool gateUnlocked = false;
 
 void setup() {
+  // Initialize pins
+  pinMode(LED_PIN, OUTPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  
+  // Servo setup
+  gateServo.attach(SERVO_PIN);
+  gateServo.write(0);  // Gate closed (0 degrees)
+  
+  // Initial state - locked
+  digitalWrite(LED_PIN, LOW);      // Red LED OFF (or connect red LED to show locked)
+  digitalWrite(RELAY_PIN, HIGH);   // Relay OFF (lock engaged - assuming active LOW)
+  digitalWrite(BUZZER_PIN, LOW);
+  
+  // Serial communication
   Serial.begin(9600);
-
-  lcd.begin(16, 2);
-  lcd.print("Enter Password:");
-
-  myServo.attach(9);
-  myServo.write(0);
-
-  pinMode(ledPin, OUTPUT);
-  pinMode(buzzerPin, OUTPUT);
+  Serial.println("🔐 Gate Controller Ready!");
+  delay(1000);
 }
 
 void loop() {
-
-  // 🔐 Password Input
-  char key = keypad.getKey();
-
-  if (key) {
-    if (key == '#') {
-      Serial.println(enteredPassword); // Send to Python
-      lcd.clear();
-      lcd.print("Checking...");
-      enteredPassword = "";
+  // Check for serial data
+  if (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    
+    Serial.println("📨 Received: " + command);
+    
+    if (command == "1") {
+      unlockGate();
+    } 
+    else if (command == "0") {
+      lockGate();
     }
-    else if (key == '*') {
-      enteredPassword = "";
-      lcd.setCursor(0,1);
-      lcd.print("                ");
-    }
-    else {
-      enteredPassword += key;
-      lcd.setCursor(0,1);
-      lcd.print(enteredPassword);
+    else if (command == "RESET") {
+      resetSystem();
     }
   }
-
-  // 🤖 Python Commands
-  if (Serial.available()) {
-    char data = Serial.read();
-
-    if (data == 'F') {
-      lcd.clear();
-      lcd.print("Show Face...");
-    }
-
-    else if (data == '1') {
-      accessGranted();
-    }
-
-    else if (data == '0') {
-      accessDenied();
-    }
+  
+  // Auto-lock after unlock duration
+  if (gateUnlocked && (millis() - previousMillis >= unlockDuration)) {
+    lockGate();
   }
 }
 
-void accessGranted() {
-  lcd.clear();
-  lcd.print("Access Granted");
-
-  digitalWrite(ledPin, HIGH);
-  tone(buzzerPin, 1000);
-
-  myServo.write(90);
-  delay(3000);
-
-  noTone(buzzerPin);
-  digitalWrite(ledPin, LOW);
-
-  myServo.write(0);
-
-  lcd.clear();
-  lcd.print("Enter Password:");
+void unlockGate() {
+  if (!gateUnlocked) {
+    Serial.println("✅ GATE UNLOCKED!");
+    
+    // Visual feedback
+    digitalWrite(LED_PIN, HIGH);     // Green LED ON
+    gateServo.write(90);             // Open gate
+    digitalWrite(RELAY_PIN, LOW);    // Unlock relay
+    
+    // Success buzzer (3 short beeps)
+    successBeep();
+    
+    gateUnlocked = true;
+    previousMillis = millis();
+  }
 }
 
-void accessDenied() {
-  lcd.clear();
-  lcd.print("Access Denied");
+void lockGate() {
+  Serial.println("🔒 GATE LOCKED!");
+  
+  // Visual feedback
+  digitalWrite(LED_PIN, LOW);      // LED OFF
+  gateServo.write(0);              // Close gate
+  digitalWrite(RELAY_PIN, HIGH);   // Lock relay
+  
+  // Lock buzzer (1 long beep)
+  tone(BUZZER_PIN, 1000, 500);
+  delay(600);
+  
+  gateUnlocked = false;
+}
 
-  for(int i=0;i<3;i++) {
-    digitalWrite(ledPin, HIGH);
-    tone(buzzerPin, 500);
-    delay(300);
-    digitalWrite(ledPin, LOW);
-    noTone(buzzerPin);
-    delay(300);
+void successBeep() {
+  // 3 short success beeps
+  for (int i = 0; i < 3; i++) {
+    tone(BUZZER_PIN, 2000, 100);
+    delay(150);
   }
+}
 
-  lcd.clear();
-  lcd.print("Enter Password:");
+void resetSystem() {
+  Serial.println("🔄 System Reset!");
+  lockGate();
 }
